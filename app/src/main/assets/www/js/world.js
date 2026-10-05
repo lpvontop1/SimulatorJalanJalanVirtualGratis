@@ -13,6 +13,9 @@
   /* ---------------- Pengambil data jaringan ---------------- */
   var Net = {};
 
+  /* UA identitas aplikasi — praktik sopan yang direkomendasikan wiki OSM */
+  Net.UA = 'SimulatorJalanJalanVirtual/' + (C.VERSION || '1.0.2') + ' (hybrid driving game; credit zdn_gg)';
+
   /** Query Overpass utk bbox; excludeService dipakai tile ekspansi (hemat kuota) */
   Net.bboxQuery = function (s, w, n, e, excludeService) {
     var kinds = 'motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link';
@@ -36,7 +39,7 @@
         }
         var ctrl = new AbortController();
         var timer = setTimeout(function () { ctrl.abort(); }, opts.timeoutMs || C.OVERPASS_TIMEOUT_MS);
-        fetch(C.OVERPASS_ENDPOINTS[idx], { method: 'POST', body: body, signal: ctrl.signal })
+        fetch(C.OVERPASS_ENDPOINTS[idx], { method: 'POST', body: body, signal: ctrl.signal, headers: { 'User-Agent': Net.UA } })
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(function (json) {
             clearTimeout(timer);
@@ -57,11 +60,20 @@
       var attempt = function (n) {
         var ctrl = new AbortController();
         var timer = setTimeout(function () { ctrl.abort(); }, 60000);
-        fetch(url, { signal: ctrl.signal }).then(function (r) {
+        fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': Net.UA } }).then(function (r) {
           clearTimeout(timer);
           if (r.status === 429 || r.status >= 500) {
             if (n > 0) { setTimeout(function () { attempt(n - 1); }, r.status === 429 ? 6000 : 2500); return; }
             reject(new Error('HTTP ' + r.status));
+            return;
+          }
+          if (r.status === 400) {
+            // Bisa jadi "too many nodes" (batas 50rb node OSM API) — baca body agar
+            // pemanggil (_fetchOsmApi) bisa memutuskan memecah bbox jadi 4 kuadran.
+            r.text().then(function (txt) {
+              if (txt && txt.indexOf('too many nodes') !== -1) resolve(txt);
+              else reject(new Error('HTTP 400'));
+            }, function () { reject(new Error('HTTP 400')); });
             return;
           }
           if (!r.ok) { reject(new Error('HTTP ' + r.status)); return; }

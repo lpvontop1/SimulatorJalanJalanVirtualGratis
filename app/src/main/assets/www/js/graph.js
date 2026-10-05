@@ -29,6 +29,16 @@
     return true;
   };
 
+  /* Node penghalang (barrier) yang tak bisa dilewati mobil — membuat jalan
+   * di balik tarikan/bolard benar-benar berakhir (jalan buntu yang realistis). */
+  var BLOCKING_BARRIERS = ['bollard', 'block', 'cycle_barrier', 'lift_gate', 'stile', 'kissing_gate', 'turnstile', 'chain', 'fence', 'wall', 'hedge', 'gate_locked'];
+  RoadGraph.prototype.barrierBlocks = function (nodeTags) {
+    if (!nodeTags || !nodeTags.barrier) return false;
+    if (BLOCKING_BARRIERS.indexOf(nodeTags.barrier) !== -1) return true;
+    if (nodeTags.barrier === 'gate' && (nodeTags.access === 'no' || nodeTags.access === 'private' || nodeTags.locked === 'yes')) return true;
+    return false;
+  };
+
   RoadGraph.prototype.layerOf = function (tags) {
     var l = parseFloat(tags && tags.layer);
     if (!isNaN(l)) return l;
@@ -67,11 +77,11 @@
   RoadGraph.prototype._ingestElements = function (json) {
     var els = (json && json.elements) || [];
     var i, el;
-    // 1) nodes
+    // 1) nodes (simpan juga tags utk deteksi barrier/noexit)
     for (i = 0; i < els.length; i++) {
       el = els[i];
       if (el.type === 'node' && !this.nodes.has(el.id)) {
-        this.nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon, wayIds: [] });
+        this.nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon, wayIds: [], tags: el.tags || null });
       }
     }
     // 2) ways drivable yang belum ada
@@ -125,6 +135,8 @@
   RoadGraph.prototype.canGo = function (wayId, aId, bId) {
     var w = this.ways.get(wayId);
     if (!w || aId === bId) return false;
+    // barrier (lift_gate/bollard/dll) = dinding: segmen yang menyentuhnya tak bisa dilalui
+    if (this._blocked(aId) || this._blocked(bId)) return false;
     var ids = w.nodeIds;
     for (var i = 0; i < ids.length; i++) {
       if (ids[i] !== aId) continue;
@@ -134,13 +146,19 @@
     return false;
   };
 
+  RoadGraph.prototype._blocked = function (nodeId) {
+    var nd = this.nodes.get(nodeId);
+    return !!(nd && this.barrierBlocks(nd.tags));
+  };
+
   /**
    * Dua way tersambung di node yang sama?
-   * Aturan flyover/underpass:
+   * Aturan flyover/underpass (semantik OSM wiki Key:layer):
    *  - layer sama: tersambung.
-   *  - ramp/link: selisih layer <= 1 tersambung (memang turun-naik).
-   *  - transisi layer SAH bila node tersebut UJUNG salah satu way
-   *    (jalan benar-benar menurun/naik, mis. Sudirman naik ke flyover Semanggi).
+   *  - node UJUNG salah satu way: SELALU tersambung (jalan benar-benar
+   *    berakhir/lanjut di situ — mis. permukaan L0 turun ke underpass L-2;
+   *    beda layer berapapun sah karena mapper memang menghubungkannya).
+   *  - ramp/link: beda layer <= 1 tersambung (memang naik-turun).
    *  - flyover MELINTAS di tengah ruas (node interior kedua way): TIDAK tersambung.
    */
   RoadGraph.prototype._isEndpoint = function (wayId, nodeId) {
@@ -155,10 +173,8 @@
     if (!a || !b) return false;
     if (a.layer === b.layer) return true;
     var diff = Math.abs(a.layer - b.layer);
-    if (diff > 1) return false;
-    if (a.isLink || b.isLink) return true;
-    // transisi di ujung way = jalan naik/turun yang sebenarnya
     if (nodeId != null && (this._isEndpoint(wayA, nodeId) || this._isEndpoint(wayB, nodeId))) return true;
+    if (a.isLink || b.isLink) return diff <= 1;
     return false;
   };
 
@@ -265,18 +281,73 @@
     var best = null, self = this;
     this.ways.forEach(function (w) {
       for (var i = 1; i < w.nodeIds.length; i++) {
-        var a = self.nodes.get(w.nodeIds[i - 1]), b = self.nodes.get(w.nodeIds[i]);
+        // lewati segmen jebakan (kedua arah terlarang) — tidak layak jadi titik awal
+        var aId = w.nodeIds[i - 1], bId = w.nodeIds[i];
+        if (!self.canGo(w.id, aId, bId) && !self.canGo(w.id, bId, aId)) continue;
+        var a = self.nodes.get(aId), b = self.nodes.get(bId);
         var pr = U.projectToSegment(lat, lon, a.lat, a.lon, b.lat, b.lon);
         if (!best || pr.distM < best.distM) {
           best = {
             distM: pr.distM, lat: pr.lat, lon: pr.lon, wayId: w.id,
             segIndex: i - 1, t: pr.t,
-            nodeA: w.nodeIds[i - 1], nodeB: w.nodeIds[i]
+            nodeA: aId, nodeB: bId
           };
         }
       }
     });
     if (!best || best.distM > (maxDistM || C.SNAP_MAX_DIST_M)) return null;
+    return best;
+  };
+
+  /** Jarak ke way terdekat (tanpa batas) — null bila graf kosong. Untuk cek "area ini belum termuat?" */
+  RoadGraph.prototype.nearestDistM = function (lat, lon) {
+    var best = null, self = this;
+    this.ways.forEach(function (w) {
+      for (var i = 1; i < w.nodeIds.length; i++) {
+        var a = self.nodes.get(w.nodeIds[i - 1]), b = self.nodes.get(w.nodeIds[i]);
+        var pr = U.projectToSegment(lat, lon, a.lat, a.lon, b.lat, b.lon);
+        if (best == null || pr.distM < best) best = pr.distM;
+      }
+    });
+    return best;
+  };
+
+  /**
+   * Segmen boleh jadi titik penempatan mobil? Minimal satu arah sah
+   * (tidak melawan oneway & tidak menabrak barrier lift_gate/bollard).
+   * Segmen "jebakan" (kedua arah terlarang) dilewati findNearest agar
+   * pemain tidak bisa menaruh mobil di kantong tanpa jalan keluar.
+   */
+  RoadGraph.prototype.placeableSegment = function (wayId, segIndex) {
+    var w = this.ways.get(wayId);
+    if (!w) return false;
+    if (segIndex < 0 || segIndex + 1 >= w.nodeIds.length) return false;
+    var a = w.nodeIds[segIndex], b = w.nodeIds[segIndex + 1];
+    return this.canGo(wayId, a, b) || this.canGo(wayId, b, a);
+  };
+
+  /**
+   * Titik terdekat dengan syarat tambahan (predicate pada (nodeA, nodeB, wayId)).
+   * Dipakai untuk mencari titik akhir alternatif yang TERHUBUNG ke komponen mobil.
+   */
+  RoadGraph.prototype.findNearestWhere = function (lat, lon, maxDistM, pred) {
+    var best = null, self = this;
+    this.ways.forEach(function (w) {
+      for (var i = 1; i < w.nodeIds.length; i++) {
+        var aId = w.nodeIds[i - 1], bId = w.nodeIds[i];
+        if (!self.canGo(w.id, aId, bId) && !self.canGo(w.id, bId, aId)) continue;
+        var a = self.nodes.get(aId), b = self.nodes.get(bId);
+        var pr = U.projectToSegment(lat, lon, a.lat, a.lon, b.lat, b.lon);
+        if (pr.distM > (maxDistM || C.SNAP_MAX_DIST_M)) continue;
+        if (pred && !pred(aId, bId, w.id, pr)) continue;
+        if (!best || pr.distM < best.distM) {
+          best = {
+            distM: pr.distM, lat: pr.lat, lon: pr.lon, wayId: w.id,
+            segIndex: i - 1, t: pr.t, nodeA: aId, nodeB: bId
+          };
+        }
+      }
+    });
     return best;
   };
 

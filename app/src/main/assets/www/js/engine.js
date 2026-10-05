@@ -54,8 +54,9 @@
     // snap: {wayId, segIndex, t, dir?} dari graph.findNearest (dir = arah preferensi opsional)
     var w = this.graph.ways.get(snap.wayId);
     var fromIdx = snap.segIndex, dir = 0;
-    var fwdOk = w.oneway !== 'fwd' && fromIdx + 1 < w.nodeIds.length;
-    var revOk = w.oneway !== 'rev' && fromIdx - 1 >= 0;
+    // target node tak boleh barrier (lift_gate/bollard) — segmen harus sah secara canGo
+    var fwdOk = w.oneway !== 'fwd' && fromIdx + 1 < w.nodeIds.length && !this.graph._blocked(w.nodeIds[fromIdx + 1]);
+    var revOk = w.oneway !== 'rev' && fromIdx - 1 >= 0 && !this.graph._blocked(w.nodeIds[fromIdx - 1]);
     if (snap.dir === 1 && fwdOk) dir = 1;
     else if (snap.dir === -1 && revOk) dir = -1;
     else if (fwdOk && !revOk) dir = 1;
@@ -252,10 +253,16 @@
       if (back.length) {
         this._takeWay(back[0].wayId, nodeId, back[0].toNodeId);
         this.stats.turns.uturn++;
-        this.emit('toast', { text: 'Jalan buntu — putar balik otomatis' });
+        this.emit('toast', { text: '🚧 Jalan buntu — putar balik otomatis di ujung jalan' });
+        this.emit('deadend', {});
         return;
       }
-      this._forceEscape(nodeId);
+      // Jalan buntu yang TIDAK bisa dibalik (oneway melarang mundur):
+      // aturan absolut game — TIDAK BOLEH melawan arah oneway. Akhiri perjalanan
+      // dengan jujur (biasanya tepi data peta / lajur keluar satu arah).
+      this.emit('toast', { text: '🚧 Jalan buntu satu arah — perjalanan berakhir di sini' });
+      this.finished = true;
+      this.emit('finish', { stats: this.stats, reason: 'stuck' });
       return;
     }
 
@@ -273,6 +280,11 @@
       // bukan persimpangan — lanjut otomatis (belokan biasa)
       var o = opts[0];
       this.stats.turns[o.cls === 'uturn' ? 'uturn' : o.cls]++;
+      // jalan buntu: satu-satunya jalan adalah putar balik di ujung
+      if (o.cls === 'uturn') {
+        this.emit('toast', { text: '🚧 Jalan buntu — putar balik otomatis di ujung jalan' });
+        this.emit('deadend', {});
+      }
       this._takeWay(o.wayId, nodeId, o.toNodeId);
       return;
     }
@@ -434,13 +446,34 @@
       this.chooseExit(best);
       return;
     }
-    // aturan: lurus kalau ada; kalau tidak (pertigaan/simpang) -> acak
+    // aturan: lurus kalau ada; kalau tidak (pertigaan/simpang) -> acak,
+    // dengan preferensi opsi yang TIDAK buntu (ada kelanjutan setelah belok)
     var opts = d.options;
     var idx = -1;
     for (var j = 0; j < opts.length; j++) {
       if (opts[j].cls === 'straight') { idx = j; break; }
     }
-    if (idx === -1) idx = Math.floor(Math.random() * opts.length);
+    if (idx === -1) {
+      // pilih acak di antara opsi yang TIDAK mengarah ke jebakan buntu
+      // (cek kedalaman-2: setelah belok, harus ada kelanjutan / jalan keluar)
+      var self = this;
+      var hasExit = function (nodeId, viaWayId, prevId, depth) {
+        var os = self.graph.optionsAt(nodeId, viaWayId, prevId);
+        if (!os.length) return false; // buntu mutlak (oneway melarang balik)
+        if (depth <= 0) return true;
+        for (var q = 0; q < os.length; q++) {
+          if (hasExit(os[q].toNodeId, os[q].wayId, nodeId, depth - 1)) return true;
+        }
+        return false;
+      };
+      var safe = [];
+      for (var k = 0; k < opts.length; k++) {
+        if (hasExit(opts[k].toNodeId, opts[k].wayId, d.nodeId, 2)) safe.push(k);
+      }
+      var pool = safe.length ? safe : null;
+      if (pool) idx = pool[Math.floor(Math.random() * pool.length)];
+      else idx = Math.floor(Math.random() * opts.length);
+    }
     var o = opts[idx];
     this.stats.turns[o.cls === 'uturn' ? 'uturn' : o.cls]++;
     this.emit('auto', {

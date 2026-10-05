@@ -355,3 +355,16 @@ button { outline: none; -webkit-tap-highlight-color: transparent; }
   .recap-item .rv { font-size: 13.5px; }
   .recap-item .rk { font-size: 9.5px; }
 }
+
+/* ---------- tap pulse (v1.0.2) ---------- */
+.tap-pulse {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(29,155,240,.35); border: 2.5px solid #1d9bf0;
+  box-shadow: 0 0 0 0 rgba(29,155,240,.55);
+  animation: tapPulse .65s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes tapPulse {
+  0% { transform: scale(.4); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}

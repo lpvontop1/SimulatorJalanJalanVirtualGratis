@@ -29,9 +29,9 @@
         Game.router = new root.Router(graph);
         var endNodeId = nearestNodeIdTo(graph, sel.end);
         Game.router.setEnd(endNodeId);
-        // data asli kadang terputus antar-komponen — beri tahu pemain dengan lembut
-        var startNodeId = nearestNodeIdTo(graph, sel.start);
-        if (!isFinite(Game.router.distToEnd(startNodeId))) {
+        // data asli kadang terputus antar-komponen — cari titik terhubung alternatif
+        var connected = ensureConnectedEnd(Game.router, graph);
+        if (!connected) {
           root.UI.toast('Rute belum terhubung — akan diperbarui saat data jalan bertambah');
         }
       } catch (e) { Game.router = null; }
@@ -81,6 +81,37 @@
     return da <= db ? a.id : b.id;
   }
 
+  /**
+   * Pastikan titik akhir router berada di komponen yang TERHUBUNG ke titik awal.
+   * Bila titik akhir ter-snap ke komponen terisolasi (mis. jalan layanan gated),
+   * cari titik alternatif terdekat yang terhubung dan geser pin ke sana.
+   * return true bila router siap dipakai (rute terhubung).
+   */
+  function ensureConnectedEnd(router, graph) {
+    var sel = root.Select;
+    if (!sel.end || !sel.start) return false;
+    var startNodeId = nearestNodeIdTo(graph, sel.start);
+    if (isFinite(router.distToEnd(startNodeId))) return true;
+    // titik akhir terpisah — petakan jangkauan DARI titik awal (reverse Dijkstra),
+    // lalu cari kandidat terdekat dari tujuan yang berada di komponen titik awal
+    var fromStart = new root.Router(graph);
+    fromStart.setEnd(startNodeId);
+    var alt = graph.findNearestWhere(sel.end.lat, sel.end.lon, C.END_RELOCATE_RADIUS_M || 800, function (aId, bId) {
+      return isFinite(fromStart.distToEnd(aId)) || isFinite(fromStart.distToEnd(bId));
+    });
+    if (!alt) return false;
+    var wAlt = graph.ways.get(alt.wayId);
+    var aN = graph.nodes.get(wAlt.nodeIds[alt.segIndex]);
+    var bN = graph.nodes.get(wAlt.nodeIds[Math.min(alt.segIndex + 1, wAlt.nodeIds.length - 1)]);
+    var nid = U.haversine(alt.lat, alt.lon, aN.lat, aN.lon) <= U.haversine(alt.lat, alt.lon, bN.lat, bN.lon) ? aN.id : bN.id;
+    router.setEnd(nid);
+    // geser tujuan efektif agar pemicu rekap & pin konsisten
+    sel.end.lat = alt.lat; sel.end.lon = alt.lon; sel.end.wayId = alt.wayId;
+    sel.end.segIndex = alt.segIndex; sel.end.t = alt.t;
+    if (Game.map) Game.map.setEndPin(alt.lat, alt.lon);
+    return isFinite(router.distToEnd(startNodeId));
+  }
+
   /* ---------------- dunia dinamis (ekspansi data selama jalan) ---------------- */
   function setupWorld() {
     var graph = Game.engine.graph;
@@ -110,6 +141,8 @@
     if (!Game.router || !Game.engine) return;
     try {
       Game.router.setEnd(Game.router.endNodeId); // Dijkstra ulang pada graf terbaru
+      // bila tujuan masih di komponen terpisah, coba lagi cari titik terhubung
+      ensureConnectedEnd(Game.router, Game.engine.graph);
       drawGuidedRoute();
     } catch (e) { /* graf sedang berubah — coba lagi nanti */ }
     Game._routeDirty = false;
@@ -297,7 +330,7 @@
     $('recap-sub').textContent = f.reason === 'destination'
       ? 'Kamu berhasil mencapai titik akhir. Berikut rekap petualanganmu:'
       : (f.reason === 'stuck'
-        ? 'Kamu mencapai batas data peta (sinyal lemah?). Ini rekap perjalananmu:'
+        ? 'Mobil sampai di jalan buntu satu arah / tepi data peta. Ini rekap perjalananmu:'
         : 'Perjalanan berhenti di tengah jalan. Ini rekapnya:');
     var avg = s.speedN ? Math.round(s.speedSum / s.speedN) : 0;
     $('recap-stats').innerHTML =

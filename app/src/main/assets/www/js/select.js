@@ -10,6 +10,7 @@
     map: null, graph: null,
     start: null, end: null,
     _fetching: false, _fetchedBoxes: new Set(), _tappedAt: 0,
+    _refetchTimer: null, _pendingRefetch: false,
     covered: new Set() // tile yang datanya pasti sudah masuk graph (dibagikan ke WorldExpander)
   };
   root.Select = Select;
@@ -23,7 +24,8 @@
         carSvg: root.UI.currentCar().svg
       });
       Select.map.map.on('click', onTap);
-      Select.map.map.on('zoomend moveend', refreshZoomHint);
+      Select.map.map.on('zoomend moveend', onViewMoved);
+      attachTapDetector(Select.map.map, onTap);
     }
     // dua tahap: segera + setelah animasi layar selesai (anti peta kosong/bergeser)
     setTimeout(function () { if (Select.map) Select.map.map.invalidateSize(); }, 60);
@@ -32,6 +34,20 @@
     refreshZoomHint();
     ensureData();
   };
+
+  /*
+   * PENTING: setiap kali pemain menggeser/memperbesar peta, data jalan untuk
+   * area BARU harus dimuat — kalau tidak, tile tampak tapi graf kosong dan
+   * ketukan jalan tidak bisa dipilih (bug "peta tampil tapi tak bisa klik").
+   */
+  function onViewMoved() {
+    refreshZoomHint();
+    if (Select._refetchTimer) clearTimeout(Select._refetchTimer);
+    Select._refetchTimer = setTimeout(function () {
+      Select._refetchTimer = null;
+      if (root.UI.current === 'screen-select') ensureData();
+    }, 650);
+  }
 
   Select.leave = function () { /* peta dipertahankan agar cepat kembali */ };
 
@@ -52,6 +68,40 @@
       return;
     }
     fetchRoads(b, key);
+  }
+
+  /*
+   * Deteksi tap andal utk Android WebView: beberapa WebView tidak selalu
+   * memicu event 'click' sintetis setelah sentuhan (terutama setelah pinch).
+   * Kita dengarkan pointerdown/up: bila jari bergerak < 26px dalam < 600ms,
+   * perlakukan sebagai tap pada titik itu. Deduplikasi memakai _tappedAt.
+   */
+  function attachTapDetector(map, cb) {
+    var el = map.getContainer();
+    if (!window.PointerEvent) return;
+    var down = null, multi = false;
+    el.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse') return;
+      if (down) { multi = true; return; } // sentuhan kedua (pinch) -> batal
+      multi = false;
+      down = { x: e.clientX, y: e.clientY, t: Date.now() };
+    });
+    el.addEventListener('pointermove', function (e) {
+      if (!down) return;
+      if (Math.abs(e.clientX - down.x) > 26 || Math.abs(e.clientY - down.y) > 26) multi = true;
+    });
+    el.addEventListener('pointercancel', function () { down = null; multi = true; });
+    el.addEventListener('pointerup', function (e) {
+      if (!down) return;
+      var d = down; down = null;
+      if (multi || e.pointerType === 'mouse') return;
+      if (Date.now() - d.t > 600) return;
+      if (Math.abs(e.clientX - d.x) > 26 || Math.abs(e.clientY - d.y) > 26) return;
+      var rect = el.getBoundingClientRect();
+      var pt = L.point(e.clientX - rect.left, e.clientY - rect.top);
+      var latlng = map.containerPointToLatLng(pt);
+      cb({ latlng: latlng, synthetic: true });
+    });
   }
 
   function fetchRoads(b, key) {
@@ -97,20 +147,30 @@
 
   function onTap(e) {
     var now = Date.now();
-    if (now - Select._tappedAt < 350) return; // anti sentuhan ganda
+    if (now - Select._tappedAt < (e.synthetic ? 800 : 350)) return; // anti dobel (klik sintetis vs klik browser)
     Select._tappedAt = now;
     if (Select.map.map.getZoom() < C.MIN_ZOOM_SELECT) {
       root.UI.toast('Perbesar peta dulu (zoom minimal ' + C.MIN_ZOOM_SELECT + ') untuk memilih titik');
       return;
     }
-    if (!Select.graph) {
+    showTapPulse(e.latlng.lat, e.latlng.lng); // respons visual setiap ketukan
+    if (!Select.graph || Select.graph.ways.size === 0) {
       root.UI.toast('Data jalan masih dimuat, tunggu sebentar...');
       ensureData();
       return;
     }
     var snap = Select.graph.findNearest(e.latlng.lat, e.latlng.lng, C.SNAP_MAX_DIST_M);
     if (!snap) {
-      root.UI.toast('Titik itu bukan jalan! Ketuk tepat di atas jalan ya');
+      // Kemungkinan besar area ini belum termuat — muat sekarang & beri tahu pemain
+      var nearM = Select.graph.nearestDistM(e.latlng.lat, e.latlng.lng);
+      if (nearM == null || nearM > C.OUT_OF_DATA_HINT_M) {
+        root.UI.toast('Memuat data jalan area ini... ketuk ulang sebentar lagi');
+        if (Select._refetchTimer) clearTimeout(Select._refetchTimer);
+        Select._fetchedBoxes.clear();
+        ensureData();
+      } else {
+        root.UI.toast('Titik itu bukan jalan! Ketuk tepat di atas jalan ya');
+      }
       return;
     }
     if (!Select.start || (Select.start && Select.end)) {
@@ -125,6 +185,16 @@
       root.UI.toast('Titik akhir ditandai!');
     }
     updatePanel();
+  }
+
+  /* Pulse kecil di titik ketukan — umpan balik bahwa tap terdaftar */
+  function showTapPulse(lat, lon) {
+    if (!Select.map) return;
+    var m = L.marker([lat, lon], {
+      interactive: false, keyboard: false, zIndexOffset: 600,
+      icon: L.divIcon({ className: 'tap-pulse', iconSize: [26, 26] })
+    }).addTo(Select.map.map);
+    setTimeout(function () { Select.map.map.removeLayer(m); }, 650);
   }
 
   function updatePanel() {

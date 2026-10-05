@@ -7,7 +7,7 @@
 
   var CONFIG = {
     APP_NAME: 'Simulator Jalan Jalan Virtual',
-    VERSION: '1.0.1',
+    VERSION: '1.0.2',
     CREDIT: 'zdn_gg',
 
     /* --- Aturan permainan --- */
@@ -16,6 +16,7 @@
     END_TRIGGER_RADIUS_M: 30,        // jarak dianggap "melewati" titik akhir
     SNAP_MAX_DIST_M: 90,             // jarak maksimal snap titik ke jalan
     MIN_ZOOM_SELECT: 14,             // zoom minimal untuk memilih titik
+    OUT_OF_DATA_HINT_M: 400,         // jarak ke jalan terdekat utk mendeteksi "area belum termuat"
     MAX_GRAPH_WAYS: 16000,           // batas aman data jalan awal (layar pilih lokasi)
     MAX_GRAPH_TOTAL: 60000,          // batas total way saat ekspansi dinamis (memori aman)
 
