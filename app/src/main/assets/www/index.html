@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d1b2a">
+<title>Simulator Jalan Jalan Virtual</title>
+<link rel="stylesheet" href="css/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-screen="screen-splash">
+
+<!-- ============ SPLASH ============ -->
+<section class="screen active" id="screen-splash">
+  <div class="splash-sky">
+    <div class="splash-stars"></div>
+    <div class="splash-car">🚗</div>
+    <h1 class="splash-title">SIMULATOR JALAN JALAN <span>VIRTUAL</span></h1>
+    <div class="splash-bar"><div class="splash-bar-fill"></div></div>
+    <p class="splash-sub">Menyiapkan mesin berkendara...</p>
+    <p class="credit-badge">oleh zdn_gg</p>
+  </div>
+</section>
+
+<!-- ============ OFFLINE (estetik & lucu) ============ -->
+<section class="screen" id="screen-offline">
+  <div class="off-scene">
+    <div class="off-stars"></div>
+    <div class="off-moon"></div>
+    <div class="off-cloud c1"></div>
+    <div class="off-cloud c2"></div>
+    <div class="off-cloud c3"></div>
+    <div class="off-city"></div>
+    <div class="off-wifi">
+      <svg viewBox="0 0 64 64" width="90" height="90">
+        <path d="M8 26 C22 12 42 12 56 26" fill="none" stroke="#7ec8ff" stroke-width="5" stroke-linecap="round" opacity=".35"/>
+        <path d="M16 35 C25 26 39 26 48 35" fill="none" stroke="#7ec8ff" stroke-width="5" stroke-linecap="round" opacity=".35"/>
+        <path d="M24 44 C28 40 36 40 40 44" fill="none" stroke="#7ec8ff" stroke-width="5" stroke-linecap="round" opacity=".35"/>
+        <circle cx="32" cy="52" r="3.4" fill="#7ec8ff" opacity=".35"/>
+        <line x1="6" y1="58" x2="58" y2="10" stroke="#ff5a5a" stroke-width="6" stroke-linecap="round" class="off-wifi-slash"/>
+      </svg>
+    </div>
+    <div class="off-road">
+      <div class="off-dashes"></div>
+      <div class="off-car">
+        <svg viewBox="0 0 120 70" width="150">
+          <ellipse cx="60" cy="62" rx="46" ry="7" fill="rgba(0,0,0,.4)"/>
+          <rect x="14" y="30" width="92" height="26" rx="12" fill="#e4572e"/>
+          <path d="M30 32 Q40 14 62 14 L74 14 Q88 16 92 32 Z" fill="#e4572e"/>
+          <path d="M38 30 Q45 20 60 20 L70 20 Q80 22 84 30 Z" fill="#bfe3ff"/>
+          <circle cx="34" cy="56" r="11" fill="#222"/><circle cx="34" cy="56" r="5" fill="#888"/>
+          <circle cx="88" cy="56" r="11" fill="#222"/><circle cx="88" cy="56" r="5" fill="#888"/>
+          <rect x="10" y="38" width="8" height="6" rx="2" fill="#fff3a0"/>
+          <rect x="102" y="38" width="8" height="6" rx="2" fill="#ff8f8f"/>
+          <text x="60" y="10" text-anchor="middle" font-size="11" fill="#ffd23f" font-family="Comic Sans MS, Arial">uh oh, ban kempis!</text>
+        </svg>
+      </div>
+    </div>
+    <div class="off-panel">
+      <h1>SINYAL HILANG!</h1>
+      <p class="off-lead">Mobilbutuh internet untuk memuat peta OSM.<br>Tanpa internet, mobil ini cuma bisa melamun di pinggir jalan. 🥲</p>
+      <p class="off-tip" id="offline-tip">...</p>
+      <button id="btn-offline-retry" class="btn btn-primary btn-big">🔄 Coba Sambung Lagi</button>
+      <p class="off-count" id="offline-countdown">Mencoba menyambung ulang otomatis dalam 5 detik...</p>
+      <p class="off-foot">butuh: data seluler / WiFi • peta: © OpenStreetMap</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MENU UTAMA ============ -->
+<section class="screen" id="screen-menu">
+  <div class="menu-bg">
+    <div class="menu-sun"></div>
+    <div class="menu-cloud mc1"></div>
+    <div class="menu-cloud mc2"></div>
+    <div class="menu-road"></div>
+    <div class="menu-car-drive">🚙</div>
+    <div class="menu-tree t1">🌳</div>
+    <div class="menu-tree t2">🌲</div>
+  </div>
+  <div class="menu-panel">
+    <h1 class="menu-title">SIMULATOR<br><span>JALAN JALAN VIRTUAL</span></h1>
+    <p class="menu-sub">jalan-jalan di peta nyata • pilih rute • ikuti aturan jalan</p>
+    <div class="menu-btns">
+      <button id="btn-play" class="btn btn-primary btn-big">▶ MULAI BERKENDARA</button>
+      <button id="btn-cars" class="btn btn-secondary">🚗 Pilih Mobil</button>
+      <button id="btn-settings" class="btn btn-secondary">⚙️ Pengaturan</button>
+      <button id="btn-credits" class="btn btn-secondary">💛 Kredit</button>
+    </div>
+    <p class="credit-badge">dibuat oleh zdn_gg • v1.0.0</p>
+  </div>
+</section>
+
+<!-- ============ PILIH MOBIL ============ -->
+<section class="screen" id="screen-cars">
+  <div class="subpanel">
+    <h2>🚗 Garasi</h2>
+    <p class="subpanel-sub">Pilih mobil andalanmu. Semua sprite 2D digambar khusus untuk game ini.</p>
+    <div class="car-stage">
+      <button id="btn-car-prev" class="btn btn-round">‹</button>
+      <div id="car-view" class="car-view"></div>
+      <button id="btn-car-next" class="btn btn-round">›</button>
+    </div>
+    <p id="car-name" class="car-name">—</p>
+    <div id="car-dots" class="car-dots"></div>
+    <div class="row-btns">
+      <button id="btn-car-back" class="btn btn-secondary">Kembali</button>
+      <button id="btn-car-use" class="btn btn-primary">Pakai Mobil Ini</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PENGATURAN ============ -->
+<section class="screen" id="screen-settings">
+  <div class="subpanel">
+    <h2>⚙️ Pengaturan</h2>
+    <div class="set-list">
+      <div class="set-item" id="set-guided">
+        <div><b>Mode Dipandu</b><small>Garis rute & rekomendasi arah di setiap persimpangan</small></div>
+        <span class="switch"></span>
+      </div>
+      <div class="set-item" id="set-roadname">
+        <div><b>Nama Jalan</b><small>Tampilkan nama jalan yang sedang dilalui</small></div>
+        <span class="switch"></span>
+      </div>
+      <div class="set-item" id="set-sound">
+        <div><b>Efek Suara</b><small>Bunyi klik & hitung mundur</small></div>
+        <span class="switch"></span>
+      </div>
+      <div class="set-item set-static">
+        <div><b>Gaya Peta</b><small>Sumber tile: OpenStreetMap / CARTO</small></div>
+        <select id="set-mapstyle">
+          <option value="voyager">Voyager (Cerah)</option>
+          <option value="osm">OSM Klasik</option>
+          <option value="dark">Malam (Gelap)</option>
+        </select>
+      </div>
+    </div>
+    <p class="set-note">Aturan main: di persimpangan kamu punya 20 detik memilih arah. Tidak memilih? Sistem pilih lurus — atau acak di pertigaan!</p>
+    <div class="row-btns">
+      <button id="btn-reset" class="btn btn-danger">Reset</button>
+      <button id="btn-settings-back" class="btn btn-primary">Kembali</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ KREDIT ============ -->
+<section class="screen" id="screen-credits">
+  <div class="subpanel">
+    <h2>💛 Kredit & Ucapan Terima Kasih</h2>
+    <div class="credit-list">
+      <div class="credit-hero">
+        <p class="credit-big">zdn_gg</p>
+        <p>pembuat & pemilik aplikasi ini</p>
+      </div>
+      <div class="credit-item"><b>OpenStreetMap</b><span>Data peta & tile — © kontributor OpenStreetMap (ODbL)</span></div>
+      <div class="credit-item"><b>CARTO</b><span>Tile style Voyager & Dark Matter</span></div>
+      <div class="credit-item"><b>Leaflet</b><span>Library peta interaktif (BSD-2)</span></div>
+      <div class="credit-item"><b>Overpass API</b><span>Mengambil data jalan OSM secara real-time</span></div>
+      <div class="credit-item"><b>Sprite Mobil</b><span>Gambar 2D orisinal dibuat khusus untuk game ini</span></div>
+    </div>
+    <p class="set-note">Dibuat dengan 💛 oleh zdn_gg — jangan lupa jaga keselamatan berkendara virtual!</p>
+    <div class="row-btns">
+      <button id="btn-credits-back" class="btn btn-primary">Kembali</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PILIH LOKASI ============ -->
+<section class="screen" id="screen-select">
+  <div id="select-map" class="fullmap"></div>
+  <div class="select-top">
+    <button id="btn-select-back" class="btn btn-round btn-ghost">‹</button>
+    <div id="select-hint" class="hint-card"><b>Ketuk jalan untuk titik AWAL</b><small>Kamu akan mulai berkendara dari titik itu</small></div>
+    <div id="select-car-chip" class="chip chip-car">🚗 Mobil</div>
+  </div>
+  <div id="select-zoom-warn" class="zoom-warn">🔍 Perbesar peta (zoom ≥ 14) untuk memilih titik dengan akurat</div>
+  <div class="select-bottom">
+    <div class="select-row1">
+      <div id="select-route-info" class="chip chip-info">Rute bebas tanpa tujuan</div>
+      <button id="select-guided" class="chip chip-toggle"><span>Mode Dipandu: AKTIF</span></button>
+    </div>
+    <div class="select-row2">
+      <button id="btn-select-reset" class="btn btn-secondary">🔄 Ulangi</button>
+      <button id="btn-select-skip" class="btn btn-amber">Tanpa Tujuan ▶</button>
+      <button id="btn-select-go" class="btn btn-primary">Mulai 🚗</button>
+    </div>
+  </div>
+  <div id="select-loading" class="loading-ov">
+    <div class="spinner"></div>
+    <p>Mengambil data jalan dari OpenStreetMap...</p>
+    <small>butuh koneksi internet</small>
+  </div>
+  <div id="select-error" class="error-ov">
+    <p>😢 Gagal mengambil data jalan.</p>
+    <p><small>Periksa internetmu lalu coba lagi.</small></p>
+    <button id="btn-select-retry" class="btn btn-primary">Coba Lagi</button>
+  </div>
+</section>
+
+<!-- ============ GAME ============ -->
+<section class="screen" id="screen-game">
+  <div id="game-map" class="fullmap"></div>
+  <div class="hud-top">
+    <button id="btn-pause" class="btn btn-round">⏸</button>
+    <div class="hud-center">
+      <div id="hud-road" class="chip chip-road">Jalan</div>
+      <div id="hud-remaining" class="chip chip-info">Perjalanan bebas</div>
+    </div>
+    <div id="game-mode-badge" class="chip chip-blue">DIPANDU</div>
+  </div>
+  <div class="hud-bottom">
+    <div class="hud-zoom">
+      <button id="btn-zin" class="btn btn-round">＋</button>
+      <button id="btn-zout" class="btn btn-round">－</button>
+      <button id="btn-center" class="btn btn-round">🎯</button>
+    </div>
+    <div class="hud-dist-wrap"><span id="hud-dist" class="chip chip-info">0 m</span></div>
+    <div class="hud-speedo">
+      <button id="btn-speed-down" class="btn btn-round btn-smooth">−</button>
+      <div class="speed-box"><span id="hud-speed">40</span><small>km/j</small></div>
+      <button id="btn-speed-up" class="btn btn-round btn-smooth">＋</button>
+    </div>
+  </div>
+
+  <!-- Popup keputusan -->
+  <div id="overlay-decision" class="ov">
+    <div class="dec-card">
+      <div id="dec-timerwrap" class="dec-timerwrap">
+        <svg width="60" height="60" viewBox="0 0 60 60">
+          <circle cx="30" cy="30" r="26" fill="rgba(0,0,0,.35)" stroke="rgba(255,255,255,.25)" stroke-width="6"/>
+          <circle id="dec-ring" cx="30" cy="30" r="26" fill="none" stroke="#ffd23f" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="163.36" stroke-dashoffset="0"
+                  transform="rotate(-90 30 30)"/>
+        </svg>
+        <span id="dec-sec">20</span>
+      </div>
+      <h3 id="dec-title">Persimpangan!</h3>
+      <p id="dec-sub">Mau lewat jalur mana?</p>
+      <div id="dec-options" class="dec-options"></div>
+    </div>
+  </div>
+
+  <!-- Pause -->
+  <div id="overlay-pause" class="ov">
+    <div class="pause-card">
+      <h3>⏸ Jeda</h3>
+      <p>Kendaraan berhenti sejenak...</p>
+      <button id="btn-pause-resume" class="btn btn-primary btn-big">▶ Lanjutkan</button>
+      <button id="btn-pause-restart" class="btn btn-secondary">🔄 Mulai Ulang</button>
+      <button id="btn-pause-finish" class="btn btn-amber">🏁 Akhiri & Lihat Rekap</button>
+      <button id="btn-pause-menu" class="btn btn-danger">🏠 Menu Utama</button>
+    </div>
+  </div>
+
+  <!-- Rekap -->
+  <div id="overlay-recap" class="ov">
+    <div class="recap-card">
+      <h3 id="recap-title">Sampai Tujuan!</h3>
+      <p id="recap-sub">Rekap perjalananmu:</p>
+      <div id="recap-stats" class="recap-stats"></div>
+      <div class="row-btns">
+        <button id="btn-recap-again" class="btn btn-primary">🔁 Main Lagi</button>
+        <button id="btn-recap-select" class="btn btn-secondary">📍 Pilih Lokasi</button>
+        <button id="btn-recap-menu" class="btn btn-danger">🏠 Menu</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div id="toast"></div>
+
+<script src="js/lib/leaflet.js"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/graph.js"></script>
+<script src="js/router.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/map.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/select.js"></script>
+<script src="js/game.js"></script>
+<script src="js/testtown.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

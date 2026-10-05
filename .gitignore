@@ -1,0 +1,15 @@
+# Build outputs
+app/build/
+build/
+.gradle/
+local.properties
+*.apk.idsig
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+captures/
+
+# Kotlin/Gradle cache
+.kotlin/
