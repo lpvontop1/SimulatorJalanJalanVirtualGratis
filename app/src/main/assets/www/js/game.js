@@ -29,6 +29,11 @@
         Game.router = new root.Router(graph);
         var endNodeId = nearestNodeIdTo(graph, sel.end);
         Game.router.setEnd(endNodeId);
+        // data asli kadang terputus antar-komponen — beri tahu pemain dengan lembut
+        var startNodeId = nearestNodeIdTo(graph, sel.start);
+        if (!isFinite(Game.router.distToEnd(startNodeId))) {
+          root.UI.toast('Rute belum terhubung — akan diperbarui saat data jalan bertambah');
+        }
       } catch (e) { Game.router = null; }
     }
 
@@ -39,6 +44,8 @@
       end: sel.end ? { lat: sel.end.lat, lon: sel.end.lon, wayId: sel.end.wayId } : null
     });
     Game.engine.place({ wayId: sel.start.wayId, segIndex: sel.start.segIndex, t: sel.start.t });
+
+    setupWorld();
 
     root.UI.show('screen-game');
     if (!Game.map) {
@@ -74,45 +81,92 @@
     return da <= db ? a.id : b.id;
   }
 
+  /* ---------------- dunia dinamis (ekspansi data selama jalan) ---------------- */
+  function setupWorld() {
+    var graph = Game.engine.graph;
+    if (!Game.world || Game.world.graph !== graph) {
+      Game.world = new root.WorldExpander(graph, {
+        covered: root.Select.covered, // tile dari layar pilih lokasi ikut terhitung
+        onMerged: onWorldMerged,
+        onLimited: function () { root.UI.toast('Area jelajahan mencapai batas memori — data baru dihentikan'); },
+        onFail: function () { root.UI.toast('Gagal memuat area jalan baru — akan dicoba lagi'); }
+      });
+      if (root.Select.end) {
+        Game.world.setTarget(root.Select.end.lat, root.Select.end.lon); // prefetch koridor ke tujuan
+      }
+    }
+    Game._routeDirty = false;
+    Game._lastWorldCheck = 0;
+    Game._lastRebuild = 0;
+  }
+
+  function onWorldMerged() {
+    if (!Game.engine || !Game.router) return;
+    if (Game.engine.waiting || Game.engine.paused) rebuildRouter();
+    else Game._routeDirty = true; // ditangguhkan agar tidak patah saat melaju
+  }
+
+  function rebuildRouter() {
+    if (!Game.router || !Game.engine) return;
+    try {
+      Game.router.setEnd(Game.router.endNodeId); // Dijkstra ulang pada graf terbaru
+      drawGuidedRoute();
+    } catch (e) { /* graf sedang berubah — coba lagi nanti */ }
+    Game._routeDirty = false;
+    Game._lastRebuild = performance.now();
+  }
+
   function drawGuidedRoute() {
-    if (!Game.router || !Game.engine) { Game.map && Game.map.clearRoute(); return; }
-    // gambar jalur serakah: dari node terdekat ikuti distToEnd minimum
+    if (!Game.router || !Game.engine || !Game.router.ready) { Game.map && Game.map.clearRoute(); return; }
+    // gambar jalur serakah mengikuti state (node, way) — konsisten dgn Dijkstra
     var g = Game.engine.graph;
-    var node = nearestNodeIdTo(g, root.Select.start);
+    var snap = root.Select.start;
+    if (!snap) { Game.map.clearRoute(); return; }
+    var node = nearestNodeIdTo(g, snap);
+    var inWayId = snap.wayId;
     var latlngs = [[Game.engine.car.lat, Game.engine.car.lon]];
     var visited = new Set();
     var guard = 0;
     while (guard++ < 6000) {
       if (node === Game.router.endNodeId) break;
-      if (visited.has(node)) break;
-      visited.add(node);
-      var best = null, bestD = Infinity;
+      var vKey = node + '|' + inWayId;
+      if (visited.has(vKey)) break;
+      visited.add(vKey);
       var n = g.nodes.get(node);
+      var bestWay = null, bestTo = null, bestD = Infinity;
       n.wayIds.forEach(function (wid) {
+        if (!g.connectable(inWayId, wid, node)) return; // aturan layer flyover
         g.nextNodeOf(wid, node).forEach(function (to) {
-          var a = n, b = g.nodes.get(to);
-          var spd = Game.router.speedOf(g.ways.get(wid)); // SAMA dengan biaya Dijkstra
-          var cost = U.haversine(a.lat, a.lon, b.lat, b.lon) / spd;
-          var d = Game.router.distToEnd(to) + cost; // relaksasi optimal, anti-siklus
-          if (d < bestD - 1e-9) { bestD = d; best = to; }
+          var cost = Game.router.edgeCost(wid, node, to);
+          var d = Game.router.distToState(to, wid) + cost;
+          if (d < bestD - 1e-9) { bestD = d; bestWay = wid; bestTo = to; }
         });
       });
-      if (best == null || !isFinite(bestD)) break;
-      var nb = g.nodes.get(best);
+      if (bestWay == null || !isFinite(bestD)) break;
+      var nb = g.nodes.get(bestTo);
       latlngs.push([nb.lat, nb.lon]);
-      node = best;
+      node = bestTo; inWayId = bestWay;
     }
     Game.map.setRoute(latlngs);
   }
 
   /* ---------------- loop utama ---------------- */
   function loop(t) {
+    if (!Game.engine) { Game._raf = null; return; } // stop — tanpa loop zombie
     Game._raf = requestAnimationFrame(loop);
     var dt = Math.min(t - Game._lastT, 250);
     Game._lastT = t;
-    if (!Game.engine) return;
     Game.engine.step(dt);
     updateDecisionTimer();
+
+    // ekspansi dunia + rebuild rute (dijadwalkan, jarang)
+    if (Game.world && !Game.engine.finished && t - Game._lastWorldCheck > C.EXPAND_CHECK_MS) {
+      Game._lastWorldCheck = t;
+      Game.world.update(Game.engine.car.lat, Game.engine.car.lon);
+    }
+    if (Game._routeDirty && Game.router && t - Game._lastRebuild > C.EXPAND_REBUILD_MS) {
+      rebuildRouter();
+    }
   }
 
   var RING_C = 2 * Math.PI * 26;
@@ -242,7 +296,9 @@
     $('recap-title').textContent = title;
     $('recap-sub').textContent = f.reason === 'destination'
       ? 'Kamu berhasil mencapai titik akhir. Berikut rekap petualanganmu:'
-      : 'Perjalanan berhenti di tengah jalan. Ini rekapnya:';
+      : (f.reason === 'stuck'
+        ? 'Kamu mencapai batas data peta (sinyal lemah?). Ini rekap perjalananmu:'
+        : 'Perjalanan berhenti di tengah jalan. Ini rekapnya:');
     var avg = s.speedN ? Math.round(s.speedSum / s.speedN) : 0;
     $('recap-stats').innerHTML =
       stat('Jarak Tempuh', U.fmtDist(s.distanceM)) +
@@ -265,7 +321,9 @@
 
   Game.destroy = function () {
     cancelAnimationFrame(Game._raf);
+    Game._raf = null;
     if (Game.engine) { Game.engine.finished = true; Game.engine = null; }
+    if (Game.world) Game.world.busy = false;
     if (Game.map) { Game.map.clearRoute(); Game.map.clearPins(); }
     onHideDecision();
     $('overlay-pause').classList.remove('show');

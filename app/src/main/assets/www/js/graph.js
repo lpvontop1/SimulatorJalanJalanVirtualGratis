@@ -49,20 +49,38 @@
   };
 
   RoadGraph.prototype.buildFromOverpass = function (json) {
+    this.nodes.clear();
+    this.ways.clear();
+    this.nodeKey.clear();
+    return this._ingestElements(json);
+  };
+
+  /**
+   * Gabungkan data Overpass/OSM baru ke graf yang sudah berjalan (ekspansi dinamis).
+   * API OSM & Overpass selalu mengembalikan geometri way UTUH, jadi way dengan id sama
+   * selalu identik -> aman dilewati. return jumlah way BARU yang ditambahkan.
+   */
+  RoadGraph.prototype.mergeFromOverpass = function (json) {
+    return this._ingestElements(json);
+  };
+
+  RoadGraph.prototype._ingestElements = function (json) {
     var els = (json && json.elements) || [];
     var i, el;
     // 1) nodes
     for (i = 0; i < els.length; i++) {
       el = els[i];
-      if (el.type === 'node') {
+      if (el.type === 'node' && !this.nodes.has(el.id)) {
         this.nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon, wayIds: [] });
       }
     }
-    // 2) ways drivable
+    // 2) ways drivable yang belum ada
     var kept = 0;
+    var newWays = [];
     for (i = 0; i < els.length; i++) {
       el = els[i];
       if (el.type !== 'way') continue;
+      if (this.ways.has(el.id)) continue; // sudah ada (geometri utuh -> identik)
       var tags = el.tags || {};
       if (!this.isDrivable(tags)) continue;
       var nodeIds = (el.nodes || []).filter(function (nid) { return this.nodes.has(nid); }, this);
@@ -87,15 +105,17 @@
         way.lengthM += U.haversine(n.lat, n.lon, m.lat, m.lon);
       }
       this.ways.set(el.id, way);
+      newWays.push(way);
       kept++;
     }
-    // 3) tautkan node <-> way + gabungkan node yang berimpit koordinat (flyover memakai node berbeda namun koordinat sama)
-    this.ways.forEach(function (w) {
-      w.nodeIds.forEach(function (nid) {
-        var nd = this.nodes.get(nid);
+    // 3) tautkan node <-> way (hanya way baru)
+    for (i = 0; i < newWays.length; i++) {
+      var w = newWays[i];
+      for (var k = 0; k < w.nodeIds.length; k++) {
+        var nd = this.nodes.get(w.nodeIds[k]);
         if (nd.wayIds.indexOf(w.id) === -1) nd.wayIds.push(w.id);
-      }, this);
-    }, this);
+      }
+    }
     return kept;
   };
 
@@ -116,15 +136,29 @@
 
   /**
    * Dua way tersambung di node yang sama?
-   * Flyover/underpass: hanya layer sama yang tersambung.
-   * Ramp/link boleh menghubungkan selisih layer <= 1 (secara fisik mereka memang turun-naik).
+   * Aturan flyover/underpass:
+   *  - layer sama: tersambung.
+   *  - ramp/link: selisih layer <= 1 tersambung (memang turun-naik).
+   *  - transisi layer SAH bila node tersebut UJUNG salah satu way
+   *    (jalan benar-benar menurun/naik, mis. Sudirman naik ke flyover Semanggi).
+   *  - flyover MELINTAS di tengah ruas (node interior kedua way): TIDAK tersambung.
    */
-  RoadGraph.prototype.connectable = function (wayA, wayB) {
+  RoadGraph.prototype._isEndpoint = function (wayId, nodeId) {
+    var w = this.ways.get(wayId);
+    if (!w || nodeId == null) return false;
+    return w.nodeIds[0] === nodeId || w.nodeIds[w.nodeIds.length - 1] === nodeId;
+  };
+
+  RoadGraph.prototype.connectable = function (wayA, wayB, nodeId) {
     if (wayA === wayB) return true;
     var a = this.ways.get(wayA), b = this.ways.get(wayB);
     if (!a || !b) return false;
     if (a.layer === b.layer) return true;
-    if ((a.isLink || b.isLink) && Math.abs(a.layer - b.layer) <= 1) return true;
+    var diff = Math.abs(a.layer - b.layer);
+    if (diff > 1) return false;
+    if (a.isLink || b.isLink) return true;
+    // transisi di ujung way = jalan naik/turun yang sebenarnya
+    if (nodeId != null && (this._isEndpoint(wayA, nodeId) || this._isEndpoint(wayB, nodeId))) return true;
     return false;
   };
 
@@ -146,6 +180,20 @@
     return res;
   };
 
+  /** Tetangga MENTAH (tanpa cek arah) — dipakai Dijkstra terbalik */
+  RoadGraph.prototype.adjNodesOf = function (wayId, nodeId) {
+    var res = [], seen = new Set();
+    var w = this.ways.get(wayId);
+    if (!w) return res;
+    var ids = w.nodeIds;
+    for (var i = 0; i < ids.length; i++) {
+      if (ids[i] !== nodeId) continue;
+      if (i + 1 < ids.length && !seen.has(ids[i + 1])) { seen.add(ids[i + 1]); res.push(ids[i + 1]); }
+      if (i - 1 >= 0 && !seen.has(ids[i - 1])) { seen.add(ids[i - 1]); res.push(ids[i - 1]); }
+    }
+    return res;
+  };
+
   /**
    * Opsi lanjutan di node `atId`, datang dari way `inWayId` via node `prevNodeId`
    * (null saat posisi awal). Tidak pernah melawan oneway. Hanya menyambung
@@ -162,7 +210,7 @@
     node.wayIds.forEach(function (wid) {
       var w = self.ways.get(wid);
       if (!w) return;
-      if (!inWay || self.connectable(inWayId, wid)) {
+      if (!inWay || self.connectable(inWayId, wid, atId)) {
         self.nextNodeOf(wid, atId).forEach(function (toId) {
           raw.push({ wayId: wid, toNodeId: toId, way: w });
         });

@@ -224,11 +224,17 @@
     bindTap('btn-offline-retry', function () { tryReconnect(); });
   }
 
+  /* ---------------- Kredit ---------------- */
+  function initCredits() {
+    bindTap('btn-credits-back', function () { UI.show('screen-menu'); });
+  }
+
   /* ---------------- Inisialisasi UI ---------------- */
   UI.init = function () {
     initMenu();
     initCars();
     initSettings();
+    initCredits();
     initOffline();
   };
 })(typeof window !== 'undefined' ? window : globalThis);

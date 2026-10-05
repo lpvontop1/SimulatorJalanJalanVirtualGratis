@@ -175,7 +175,7 @@
       if (nodeId === target.nodeId) {
         // keluar sesuai pilihan
         var ok = this.graph.canGo(target.wayId, nodeId, target.toNodeId) &&
-          this.graph.connectable(curWay.id, target.wayId);
+          this.graph.connectable(curWay.id, target.wayId, nodeId);
         if (ok) { this._takeWay(target.wayId, nodeId, target.toNodeId); return; }
       }
       // lanjut mengelilingi bundaran
@@ -293,7 +293,7 @@
   DriveEngine.prototype._ringContinuation = function (nodeId, curWayId) {
     var self = this;
     var opts = this.graph.rawOptionsAt(nodeId).filter(function (o) {
-      return o.way.isRoundabout && self.graph.connectable(curWayId, o.wayId) &&
+      return o.way.isRoundabout && self.graph.connectable(curWayId, o.wayId, nodeId) &&
         self.graph.canGo(o.wayId, nodeId, o.toNodeId);
     });
     return opts.length ? opts[0] : null;
@@ -347,7 +347,7 @@
       collectAt(cur, true);
       var next = this.graph.rawOptionsAt(cur).filter(function (o) {
         return o.way.isRoundabout && self.graph.canGo(o.wayId, cur, o.toNodeId) &&
-          self.graph.connectable(curWay, o.wayId);
+          self.graph.connectable(curWay, o.wayId, cur);
       });
       if (!next.length) break; // ring putus (data aneh) — berhenti
       var chosen = next[0];

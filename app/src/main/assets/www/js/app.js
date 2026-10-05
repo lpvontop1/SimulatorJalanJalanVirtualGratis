@@ -71,7 +71,8 @@
       }
       s.graph = new root.RoadGraph();
       s.graph.buildFromOverpass(root.TESTTOWN);
-      s._cacheKey = 'fixture';
+      s._fetchedBoxes = new Set(['fixture']);
+      s.covered = new Set(['3560:-207']); // tile fixture (Semanggi sintetis)
       // simulasikan titik awal & akhir otomatis
       var snapA = s.graph.findNearest(-6.20305, 106.8000, 100);
       var snapB = s.graph.findNearest(-6.20030, 106.8000, 100);

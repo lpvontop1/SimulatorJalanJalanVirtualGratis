@@ -9,7 +9,8 @@
   var Select = {
     map: null, graph: null,
     start: null, end: null,
-    _fetching: false, _cache: new Map(), _tappedAt: 0
+    _fetching: false, _fetchedBoxes: new Set(), _tappedAt: 0,
+    covered: new Set() // tile yang datanya pasti sudah masuk graph (dibagikan ke WorldExpander)
   };
   root.Select = Select;
 
@@ -24,7 +25,9 @@
       Select.map.map.on('click', onTap);
       Select.map.map.on('zoomend moveend', refreshZoomHint);
     }
+    // dua tahap: segera + setelah animasi layar selesai (anti peta kosong/bergeser)
     setTimeout(function () { if (Select.map) Select.map.map.invalidateSize(); }, 60);
+    setTimeout(function () { if (Select.map) Select.map.map.invalidateSize(); }, 420);
     updatePanel();
     refreshZoomHint();
     ensureData();
@@ -43,19 +46,12 @@
     if (!Select.map) return;
     var b = Select.map.map.getBounds();
     var key = [b.getSouth().toFixed(2), b.getWest().toFixed(2), b.getNorth().toFixed(2), b.getEast().toFixed(2)].join(',');
-    if (Select.graph && Select._cacheKey === key) return;
-    if (Select._cache.has(key)) {
-      Select.graph = Select._cache.get(key);
+    if (Select.graph && Select._fetchedBoxes.has(key)) return; // area ini sudah termuat
+    if (Select.graph && Select.graph.ways.size >= C.MAX_GRAPH_TOTAL) {
+      root.UI.toast('Area jelajahan sudah sangat luas — data tidak ditambah lagi');
       return;
     }
     fetchRoads(b, key);
-  }
-
-  function overpassQuery(b) {
-    var s = b.getSouth().toFixed(5), w = b.getWest().toFixed(5),
-        n = b.getNorth().toFixed(5), e = b.getEast().toFixed(5);
-    return '[out:json][timeout:30];way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|service|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"](' +
-      s + ',' + w + ',' + n + ',' + e + ');(._;>;);out body qt;';
   }
 
   function fetchRoads(b, key) {
@@ -64,57 +60,30 @@
     var loading = $('select-loading'), errBox = $('select-error');
     if (loading) loading.classList.add('show');
     if (errBox) errBox.classList.remove('show');
-    var body = 'data=' + encodeURIComponent(overpassQuery(b));
-    var done = function (g, kept, via) {
-      Select.graph = g;
-      Select._cache.set(key, g);
-      Select._fetching = false;
-      if (loading) loading.classList.remove('show');
-      root.UI.toast('Data jalan termuat (' + kept + ' ruas, via ' + via + ')');
-    };
-    var attempt = function (idx) {
-      if (idx >= C.OVERPASS_ENDPOINTS.length) { osmApiFallback(b, done, 0); return; }
-      var ctrl = new AbortController();
-      var timer = setTimeout(function () { ctrl.abort(); }, C.OVERPASS_TIMEOUT_MS);
-      fetch(C.OVERPASS_ENDPOINTS[idx], { method: 'POST', body: body, signal: ctrl.signal })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function (json) {
-          clearTimeout(timer);
-          var g = new root.RoadGraph();
-          var kept = g.buildFromOverpass(json);
-          if (kept > C.MAX_GRAPH_WAYS) throw new Error('Terlalu besar');
-          done(g, kept, 'Overpass');
-        })
-        .catch(function () { clearTimeout(timer); attempt(idx + 1); });
-    };
-    attempt(0);
-  }
-
-  /** Cadangan: API resmi OSM 0.6 (geometri utuh, tanpa filter — lebih besar tapi andal) */
-  function osmApiFallback(b, done, idx) {
-    var PAD = 0.004; // perluas agar jalan di tepi tetap utuh
-    var s = (b.getSouth() - PAD).toFixed(5), w = (b.getWest() - PAD).toFixed(5),
-        n = (b.getNorth() + PAD).toFixed(5), e = (b.getEast() + PAD).toFixed(5);
-    var url = 'https://api.openstreetmap.org/api/0.6/map.json?bbox=' + w + ',' + s + ',' + e + ',' + n;
-    var ctrl = new AbortController();
-    var timer = setTimeout(function () { ctrl.abort(); }, 60000);
-    fetch(url, { signal: ctrl.signal })
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.text();
-      })
-      .then(function (txt) {
-        clearTimeout(timer);
-        if (txt.indexOf('too many nodes') !== -1) throw new Error('too big');
-        var json = JSON.parse(txt);
-        var g = new root.RoadGraph();
-        var kept = g.buildFromOverpass(json);
-        if (!kept) throw new Error('kosong');
-        done(g, kept, 'OSM API');
+    var s = b.getSouth(), w = b.getWest(), n = b.getNorth(), e = b.getEast();
+    root.Net.fetchRoadBBox(s, w, n, e, { excludeService: false })
+      .then(function (res) {
+        // pengaman: hitung way drivable SEBELUM merge agar graf tidak membengkak
+        var g = Select.graph || (Select.graph = new root.RoadGraph());
+        var cnt = 0, els = res.json.elements || [];
+        for (var i = 0; i < els.length; i++) {
+          if (els[i].type === 'way' && g.isDrivable(els[i].tags || {})) cnt++;
+        }
+        if (cnt > C.MAX_GRAPH_WAYS) throw new Error('Terlalu besar');
+        var kept = g.ways.size ? g.mergeFromOverpass(res.json) : g.buildFromOverpass(res.json);
+        Select._fetchedBoxes.add(key);
+        // tandai tile utuh yang sudah pasti tercakup (dipakai juga saat game)
+        var t = C.EXPAND_TILE_DEG;
+        for (var tx = Math.ceil(w / t - 1e-9); tx <= Math.floor(e / t + 1e-9); tx++) {
+          for (var ty = Math.ceil(s / t - 1e-9); ty <= Math.floor(n / t + 1e-9); ty++) {
+            Select.covered.add(tx + ':' + ty);
+          }
+        }
+        Select._fetching = false;
+        if (loading) loading.classList.remove('show');
+        root.UI.toast('Data jalan termuat (+' + kept + ' ruas, via ' + res.via + ')');
       })
       .catch(function () {
-        clearTimeout(timer);
-        var errBox = $('select-error');
         Select._fetching = false;
         if ($('select-loading')) $('select-loading').classList.remove('show');
         if (errBox) errBox.classList.add('show');
@@ -122,7 +91,7 @@
   }
 
   Select.retry = function () {
-    Select._cacheKey = null;
+    Select._fetchedBoxes = new Set();
     ensureData();
   };
 
@@ -209,7 +178,7 @@
     root.UI.bindTap('btn-select-reset', function () { Select.resetPoints(); });
     root.UI.bindTap('btn-select-skip', function () {
       Select.end = null;
-      if (Select.map) Select.map.endMarker && Select.map.map.removeLayer(Select.map.endMarker);
+      if (Select.map) Select.map.clearEndPin();
       root.Game.startGame();
     });
     root.UI.bindTap('btn-select-go', function () {
@@ -219,6 +188,8 @@
     root.UI.bindTap('select-guided', function () { Select.guidedToggle(); });
     root.UI.bindTap('select-car-chip', function () { UI_showCars(); });
     root.UI.bindTap('btn-select-retry', function () { Select.retry(); });
+    // KUNCI: layar pilih lokasi harus menyiapkan peta + data SETIAP kali ditampilkan
+    root.UI.onShow('screen-select', function () { Select.enter(); });
     paintGuided();
   };
 
