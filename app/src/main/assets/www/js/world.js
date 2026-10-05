@@ -26,14 +26,23 @@
 
   /**
    * Ambil data jalan utk bbox: coba semua endpoint Overpass, lalu fallback OSM API 0.6.
+   * Optimasi v1.1.0: bila SEMUA endpoint Overpass gagal (mis. IP diblokir), catat
+   * cooldown — selama 5 menit permintaan berikutnya langsung ke OSM API tanpa
+   * menunggu timeout Overpass berulang-ulang.
    * resolve({json, via}) | reject(Error)
    */
+  Net._overpassDownUntil = 0;
   Net.fetchRoadBBox = function (s, w, n, e, opts) {
     opts = opts || {};
     var body = 'data=' + encodeURIComponent(Net.bboxQuery(s, w, n, e, !!opts.excludeService));
+    var useOverpass = Date.now() >= Net._overpassDownUntil;
     return new Promise(function (resolve, reject) {
       var attempt = function (idx) {
-        if (idx >= C.OVERPASS_ENDPOINTS.length) {
+        if (!useOverpass || idx >= C.OVERPASS_ENDPOINTS.length) {
+          if (useOverpass && idx >= C.OVERPASS_ENDPOINTS.length) {
+            // semua endpoint gagal -> tidurkan Overpass sementara
+            Net._overpassDownUntil = Date.now() + (C.OVERPASS_COOLDOWN_MS || 300000);
+          }
           Net._fetchOsmApi(s, w, n, e).then(resolve, reject);
           return;
         }

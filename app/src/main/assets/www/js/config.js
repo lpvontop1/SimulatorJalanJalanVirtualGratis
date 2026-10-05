@@ -7,7 +7,7 @@
 
   var CONFIG = {
     APP_NAME: 'Simulator Jalan Jalan Virtual',
-    VERSION: '1.0.2',
+    VERSION: '1.1.0',
     CREDIT: 'zdn_gg',
 
     /* --- Aturan permainan --- */
@@ -15,10 +15,12 @@
     AUTO_CHOICE: 'STRAIGHT_FIRST',   // lurus dulu, kalau tidak ada -> acak (aturan pertigaan/simpang)
     END_TRIGGER_RADIUS_M: 30,        // jarak dianggap "melewati" titik akhir
     SNAP_MAX_DIST_M: 90,             // jarak maksimal snap titik ke jalan
-    MIN_ZOOM_SELECT: 14,             // zoom minimal untuk memilih titik
+    MIN_ZOOM_SELECT: 14,             // zoom minimal untuk menaruh pin
+    LAUNCH_BOX_DEG: 0.008,           // setengah-lebar bbox data saat "Mulai" (±0.008° ≈ 1.8 km) — kecil & cepat
+    LAUNCH_SNAP_M: 400,              // jarak snap pin mentah ke jalan saat "Mulai" (400 m cukup utk titik di dalam taman besar spt Monas)
     OUT_OF_DATA_HINT_M: 400,         // jarak ke jalan terdekat utk mendeteksi "area belum termuat"
     MAX_GRAPH_WAYS: 16000,           // batas aman data jalan awal (layar pilih lokasi)
-    MAX_GRAPH_TOTAL: 60000,          // batas total way saat ekspansi dinamis (memori aman)
+    MAX_GRAPH_TOTAL: 90000,          // batas total way saat ekspansi dinamis (90-120 MB, aman utk ponsel 3GB+)
 
     /* --- Ekspansi dunia (muat data jalan selama berkendara) --- */
     EXPAND_TILE_DEG: 0.03,           // ukuran tile ~3.3 km
@@ -55,9 +57,23 @@
     OVERPASS_ENDPOINTS: [
       'https://overpass-api.de/api/interpreter',
       'https://overpass.kumi.systems/api/interpreter',
-      'https://overpass.private.coffee/api/interpreter'
+      'https://overpass.private.coffee/api/interpreter',
+      'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
     ],
-    OVERPASS_TIMEOUT_MS: 35000,
+    OVERPASS_TIMEOUT_MS: 20000,
+    OVERPASS_COOLDOWN_MS: 300000,    // bila semua endpoint Overpass gagal, langsung pakai OSM API selama 5 menit
+
+    /* --- Lokasi populer utk layar koordinat --- */
+    COORD_PRESETS: [
+      { name: 'Monas, Jakarta', lat: -6.1754024, lon: 106.8271692 },
+      { name: 'Bundaran HI', lat: -6.1954480, lon: 106.8228550 },
+      { name: 'Semanggi', lat: -6.2195710, lon: 106.8128220 },
+      { name: 'Kota Tua Jakarta', lat: -6.1352000, lon: 106.8133000 },
+      { name: 'Kebun Raya Bogor', lat: -6.5950380, lon: 106.7992390 },
+      { name: 'Alun-Alun Cianjur', lat: -6.8211758, lon: 107.1400036 },
+      { name: 'Kantor Bupati Cianjur', lat: -6.8239280, lon: 107.1408130 },
+      { name: 'Gedung Sate, Bandung', lat: -6.9025300, lon: 107.6187100 }
+    ],
 
     /* --- Peta --- */
     DEFAULT_ZOOM: 16,

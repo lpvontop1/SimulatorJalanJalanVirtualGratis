@@ -13,3 +13,4 @@ captures/
 
 # Kotlin/Gradle cache
 .kotlin/
+local.properties

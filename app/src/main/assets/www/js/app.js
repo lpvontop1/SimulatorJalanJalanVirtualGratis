@@ -25,7 +25,8 @@
         else root.Game.pause();
         return;
       }
-      if (cur === 'screen-select') { root.UI.show('screen-menu'); return; }
+      if (cur === 'screen-select') { root.UI.show('screen-pickmode'); return; }
+      if (cur === 'screen-pickmode' || cur === 'screen-coords') { root.UI.show('screen-menu'); return; }
       if (cur === 'screen-cars' || cur === 'screen-settings' || cur === 'screen-credits') { root.UI.show('screen-menu'); return; }
       if (cur === 'screen-menu') {
         if (root.AndroidBridge && root.AndroidBridge.minimize) root.AndroidBridge.minimize();

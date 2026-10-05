@@ -92,10 +92,60 @@
   UI.bindTap = bindTap;
 
   function initMenu() {
-    bindTap('btn-play', function () { UI.show('screen-select'); });
+    bindTap('btn-play', function () { UI.show('screen-pickmode'); });
     bindTap('btn-cars', function () { UI.show('screen-cars'); });
     bindTap('btn-settings', function () { UI.show('screen-settings'); });
     bindTap('btn-credits', function () { UI.show('screen-credits'); });
+  }
+
+  /* ---------------- Pilih cara menentukan lokasi awal ---------------- */
+  function initPickmode() {
+    bindTap('btn-pick-map', function () { UI.show('screen-select'); });
+    bindTap('btn-pick-coords', function () { UI.show('screen-coords'); });
+    bindTap('btn-pick-back', function () { UI.show('screen-menu'); });
+  }
+
+  /* ---------------- Layar koordinat ---------------- */
+  function initCoords() {
+    var grid = document.getElementById('coord-presets');
+    if (grid) {
+      grid.innerHTML = '';
+      var presets = C.COORD_PRESETS || [];
+      presets.forEach(function (p) {
+        var b = document.createElement('button');
+        b.className = 'preset-chip';
+        b.type = 'button';
+        b.textContent = p.name;
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          Sound.click();
+          var iLat = document.getElementById('in-lat');
+          var iLon = document.getElementById('in-lon');
+          if (iLat) iLat.value = String(p.lat);
+          if (iLon) iLon.value = String(p.lon);
+          setCoordsErr('');
+        });
+        grid.appendChild(b);
+      });
+    }
+    bindTap('btn-coords-back', function () { UI.show('screen-pickmode'); });
+    bindTap('btn-coords-use', function () {
+      var vLat = (document.getElementById('in-lat') || {}).value;
+      var vLon = (document.getElementById('in-lon') || {}).value;
+      var lat = parseFloat(String(vLat || '').replace(',', '.'));
+      var lon = parseFloat(String(vLon || '').replace(',', '.'));
+      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        setCoordsErr('Koordinat tidak valid. Latitude -90..90, Longitude -180..180 — contoh: -6.175392, 106.827153');
+        return;
+      }
+      setCoordsErr('');
+      root.Select.useCoords(lat, lon);
+    });
+  }
+
+  function setCoordsErr(msg) {
+    var el = document.getElementById('coords-err');
+    if (el) el.textContent = msg;
   }
 
   /* ---------------- Pilih mobil ---------------- */
@@ -232,6 +282,8 @@
   /* ---------------- Inisialisasi UI ---------------- */
   UI.init = function () {
     initMenu();
+    initPickmode();
+    initCoords();
     initCars();
     initSettings();
     initCredits();

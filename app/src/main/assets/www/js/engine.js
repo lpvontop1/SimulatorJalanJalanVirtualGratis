@@ -218,6 +218,91 @@
     }
   };
 
+  /**
+   * Reverse-out (v1.1.0): jalan buntu satu arah — mobil MUNDUR ke belakang
+   * (maks 4 node) lalu melanjutkan lewat jalan lain yang tersedia di sana.
+   * return true bila manuver berhasil, false bila benar2 tak ada jalan.
+   */
+  DriveEngine.prototype._reverseOut = function (deadNodeId, inWayId) {
+    var w = this.graph.ways.get(inWayId);
+    if (!w || this.prevNodeId == null) return false;
+    var idx = w.nodeIds.indexOf(this.prevNodeId);
+    var deadIdx = w.nodeIds.indexOf(deadNodeId);
+    if (idx === -1) return false;
+    // arah "ke belakang" tergantung arah pelaksanaan: bila deadIdx > idx mobil
+    // melaju searah urutan node (mundur = indeks turun), sebaliknya naik.
+    var stepDir = deadIdx > idx ? -1 : 1;
+    var chain = [this.prevNodeId];
+    for (var k = 1; k <= 4; k++) {
+      var bi = idx + stepDir * k;
+      if (bi < 0 || bi >= w.nodeIds.length) break;
+      chain.push(w.nodeIds[bi]);
+    }
+    for (var i = 0; i < chain.length; i++) {
+      var atNode = chain[i];
+      var cameFrom = i === 0 ? deadNodeId : chain[i - 1];
+      var opts = this.graph.optionsAt(atNode, inWayId, cameFrom);
+      // jangan pernah mundur lagi ke arah yang buntu / ke node yang baru dilewati
+      opts = opts.filter(function (o) {
+        return !(o.wayId === inWayId && (o.toNodeId === deadNodeId || o.toNodeId === cameFrom));
+      });
+      if (!opts.length) continue;
+      var nA = this.graph.nodes.get(atNode);
+      var nF = this.graph.nodes.get(cameFrom);
+      var fwdBearing = nF ? U.bearing(nA.lat, nA.lon, nF.lat, nF.lon) : this.car.bearing;
+      var best = null, bestScore = 1e9;
+      for (var j = 0; j < opts.length; j++) {
+        var o = opts[j];
+        var nT = this.graph.nodes.get(o.toNodeId);
+        var sc = nT ? Math.abs(U.angleDiff(U.bearing(nA.lat, nA.lon, nT.lat, nT.lon), fwdBearing)) : 999;
+        if (o.way.hw === 'service') sc += 60;
+        if (sc < bestScore) { bestScore = sc; best = o; }
+      }
+      if (!best) continue;
+      this.stats.turns.uturn++;
+      this.emit('toast', { text: '🚧 Jalan buntu satu arah — mobil mundur & mencari jalan lain' });
+      this.emit('deadend', {});
+      this._takeWay(best.wayId, atNode, best.toNodeId);
+      return true;
+    }
+    return false;
+  };
+
+  /**
+   * Rescue (v1.1.0): bila reverse-out pun gagal (kanal tertutup gerbang/bollard
+   * tanpa persilangan termuat), pindahkan mobil ke segmen drivable terdekat
+   * (≤500 m) yang BUKAN way buntu. Jauh lebih baik daripada perjalanan tamat.
+   */
+  DriveEngine.prototype._rescueNearby = function (nodeId, inWayId) {
+    var node = this.graph.nodes.get(nodeId);
+    if (!node) return false;
+    var self = this;
+    var alt = this.graph.findNearestWhere(node.lat, node.lon, 500, function (aId, bId, wId) {
+      if (wId === inWayId) return false;
+      return self.graph.canGo(wId, aId, bId) || self.graph.canGo(wId, bId, aId);
+    });
+    if (!alt) return false;
+    var fwdOk = this.graph.canGo(alt.wayId, alt.nodeA, alt.nodeB);
+    var revOk = this.graph.canGo(alt.wayId, alt.nodeB, alt.nodeA);
+    var dir = fwdOk ? 1 : (revOk ? -1 : 0);
+    if (dir === 0) return false;
+    if (dir === -1 && alt.segIndex === 0) {
+      if (!fwdOk) return false;
+      dir = 1;
+    }
+    this.car.wayId = alt.wayId;
+    this.car.fromIdx = alt.segIndex;
+    this.car.dir = dir;
+    this.car.toIdx = alt.segIndex + dir;
+    this.car.t = alt.t;
+    this.prevNodeId = null;
+    this._updatePos();
+    this.stats.turns.uturn++;
+    this.emit('toast', { text: '🚑 Jalan di depan tertutup gerbang — mobil dipindah ke jalan terdekat' });
+    this.emit('deadend', {});
+    return true;
+  };
+
   DriveEngine.prototype._takeWay = function (wayId, fromNodeId, toNodeId) {
     var w = this.graph.ways.get(wayId);
     var ti = w.nodeIds.indexOf(toNodeId);
@@ -257,9 +342,13 @@
         this.emit('deadend', {});
         return;
       }
-      // Jalan buntu yang TIDAK bisa dibalik (oneway melarang mundur):
-      // aturan absolut game — TIDAK BOLEH melawan arah oneway. Akhiri perjalanan
-      // dengan jujur (biasanya tepi data peta / lajur keluar satu arah).
+      // Jalan buntu SATU ARAH (oneway melarang mundur): jangan akhiri perjalanan!
+      // Simulasi mundur (reverse-out): mobil mundur ke node belakang lalu cari
+      // jalan lain dari sana. Lebih realistis & ramah pemain daripada game over.
+      if (this._reverseOut(nodeId, inWayId)) return;
+      // langkah terakhir: pindahkan mobil ke segmen drivable terdekat (rescue)
+      if (this._rescueNearby(nodeId, inWayId)) return;
+      // benar2 buntu (bahkan mundur pun tak ada jalan) — akhiri dengan jujur
       this.emit('toast', { text: '🚧 Jalan buntu satu arah — perjalanan berakhir di sini' });
       this.finished = true;
       this.emit('finish', { stats: this.stats, reason: 'stuck' });

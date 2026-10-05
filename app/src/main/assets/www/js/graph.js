@@ -77,10 +77,28 @@
   RoadGraph.prototype._ingestElements = function (json) {
     var els = (json && json.elements) || [];
     var i, el;
+    // 0) Hemat memori (v1.1.0): OSM API 0.6 mengembalikan SEMUA objek di bbox
+    //    (gedung, trotoar, pohon...). Simpan HANYA node yang dipakai way drivable.
+    //    Payload Overpass hasil filter tetap utuh (semua nodenya milik jalan).
+    var needed = null;
+    for (i = 0; i < els.length; i++) {
+      el = els[i];
+      if (el.type === 'way' && !this.ways.has(el.id) && this.isDrivable(el.tags || {})) { needed = {}; break; }
+    }
+    if (needed) {
+      for (i = 0; i < els.length; i++) {
+        el = els[i];
+        if (el.type === 'way' && !this.ways.has(el.id) && this.isDrivable(el.tags || {})) {
+          var nds = el.nodes || [];
+          for (var k = 0; k < nds.length; k++) needed[nds[k]] = 1;
+        }
+      }
+    }
     // 1) nodes (simpan juga tags utk deteksi barrier/noexit)
     for (i = 0; i < els.length; i++) {
       el = els[i];
       if (el.type === 'node' && !this.nodes.has(el.id)) {
+        if (needed && !needed[el.id]) continue; // node tak terpakai -> buang
         this.nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon, wayIds: [], tags: el.tags || null });
       }
     }
@@ -276,10 +294,13 @@
     return raw;
   };
 
-  /** cari titik terdekat di seluruh way (snap tap pemain) */
+  /** cari titik terdekat di seluruh way (snap tap pemain)
+   *  v1.1.0: utamakan jalan NON-service — jangan memulai/mengakhiri perjalanan
+   *  di loop parkir/jalan layanan bila jalan utama hanya sedikit lebih jauh. */
   RoadGraph.prototype.findNearest = function (lat, lon, maxDistM) {
-    var best = null, self = this;
+    var best = null, bestMain = null, self = this;
     this.ways.forEach(function (w) {
+      var isMain = w.hw !== 'service';
       for (var i = 1; i < w.nodeIds.length; i++) {
         // lewati segmen jebakan (kedua arah terlarang) — tidak layak jadi titik awal
         var aId = w.nodeIds[i - 1], bId = w.nodeIds[i];
@@ -293,9 +314,23 @@
             nodeA: aId, nodeB: bId
           };
         }
+        if (isMain && (!bestMain || pr.distM < bestMain.distM)) {
+          bestMain = {
+            distM: pr.distM, lat: pr.lat, lon: pr.lon, wayId: w.id,
+            segIndex: i - 1, t: pr.t, nodeA: aId, nodeB: bId
+          };
+        }
       }
     });
-    if (!best || best.distM > (maxDistM || C.SNAP_MAX_DIST_M)) return null;
+    var limit = maxDistM || C.SNAP_MAX_DIST_M;
+    if (!best || best.distM > limit) return null;
+    // bila terdekat adalah jalan layanan & jalan utama masih dalam jangkauan
+    // (maksimal 250 m lebih jauh), pakai jalan utama agar tidak nyangkut di parkir
+    var bestWay = this.ways.get(best.wayId);
+    if (bestWay && bestWay.hw === 'service' && bestMain &&
+        bestMain.distM <= limit && bestMain.distM <= best.distM + 250) {
+      return bestMain;
+    }
     return best;
   };
 
